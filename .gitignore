@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Build artifacts
+dist/
+build/
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# uv lockfile (optional: keep if you want reproducible installs)
+# uv.lock
