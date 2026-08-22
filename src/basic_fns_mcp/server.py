@@ -18,22 +18,29 @@ from .config import ServerConfig, get_config
 from .safety import DEFAULT_SKIP_DIRS, resolve, truncate
 
 
-mcp = FastMCP(
-    "basic-fns-mcp",
-    instructions=(
-        "All filesystem paths are relative to the server root. "
-        "Use read/edit/write for file changes; ls/find/grep for discovery. "
-        "edit requires an old_string that uniquely identifies the target "
-        "unless replace_all is true."
-    ),
+_DEFAULT_INSTRUCTIONS = (
+    "All filesystem paths are relative to the server root. "
+    "Use read/edit/write for file changes; ls/find/grep for discovery. "
+    "edit requires an old_string that uniquely identifies the target "
+    "unless replace_all is true."
 )
+
+mcp = FastMCP("basic-fns-mcp", instructions=_DEFAULT_INSTRUCTIONS)
 
 _RG_AVAILABLE = shutil.which("rg") is not None
 
 
 def _relp(target: Path, cfg: ServerConfig) -> str:
-    """Return a POSIX-style path string relative to the server root."""
-    return target.relative_to(cfg.root).as_posix()
+    """Return a POSIX-style path string relative to the server root.
+
+    In dangerous mode a target can legitimately sit outside the root, where a
+    relative path would be meaningless (and ``relative_to`` would raise), so
+    fall back to the absolute path.
+    """
+    try:
+        return target.relative_to(cfg.root).as_posix()
+    except ValueError:
+        return target.as_posix()
 
 
 def _result(text: str, cfg: ServerConfig | None = None) -> str:
@@ -434,6 +441,19 @@ def register_tools(cfg: ServerConfig | None = None) -> None:
     """
     if cfg is None:
         cfg = get_config()
+
+    # Tell the client which path convention is actually in force, otherwise a
+    # model reads "relative to the server root" and never tries an absolute path.
+    if cfg.dangerous:
+        mcp.instructions = (
+            "Filesystem paths may be absolute or relative to the server root "
+            f"({cfg.root}); there is no root confinement in this session. "
+            "Use read/edit/write for file changes; ls/find/grep for discovery. "
+            "edit requires an old_string that uniquely identifies the target "
+            "unless replace_all is true."
+        )
+    else:
+        mcp.instructions = _DEFAULT_INSTRUCTIONS
 
     enabled: list = [read, grep, find, ls]
     if not cfg.read_only:

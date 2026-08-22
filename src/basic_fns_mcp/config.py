@@ -17,6 +17,16 @@ class ServerConfig:
     bash_timeout: int = 120
     allow_bash: bool = True
     read_only: bool = False
+    dangerous: bool = False
+    """Disable root containment for the path tools.
+
+    Normally ``root`` is a hard boundary: read/write/edit/ls/find/grep refuse any
+    path resolving outside it. With ``dangerous`` the boundary is dropped and
+    those tools reach anything the invoking user can, matching what ``bash``
+    could always do. ``root`` still supplies the base for relative paths.
+
+    Only appropriate on a single-user trusted machine. See README.
+    """
 
     def __post_init__(self):
         # Ensure the root is fully resolved the first time the object is built.

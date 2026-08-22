@@ -18,10 +18,18 @@ def resolve(path: str, cfg: ServerConfig) -> Path:
 
     Symlinks are followed by ``Path.resolve()``.  If the resolved path is not
     ``root`` or a descendant of ``root``, ``ToolError`` is raised.
+
+    When ``cfg.dangerous`` is set the containment check is skipped entirely and
+    any path the invoking user can reach is allowed.  ``root`` still anchors
+    relative paths, so ordinary in-root usage is unchanged.
     """
     expanded = Path(path).expanduser()
     raw = cfg.root / expanded if not expanded.is_absolute() else expanded
     resolved = raw.resolve()
+
+    if getattr(cfg, "dangerous", False):
+        return resolved
+
     root = cfg.root.resolve()
 
     if not resolved.is_relative_to(root):
