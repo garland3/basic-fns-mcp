@@ -143,6 +143,26 @@ def write(
     return _result(f"{rel}: {action}, {byte_count} bytes", cfg)
 
 
+def mkdir(
+    path: Annotated[str, Field(description="Directory path relative to the server root")],
+) -> str:
+    """Create a directory and any missing parent directories."""
+    cfg = get_config()
+    target = resolve(path, cfg)
+
+    if target.exists():
+        if target.is_dir():
+            raise ToolError(f"Directory already exists: {path!r}")
+        raise ToolError(f"Path already exists and is not a directory: {path!r}")
+
+    try:
+        target.mkdir(parents=True)
+    except OSError as exc:
+        raise ToolError(f"Failed to create directory {path!r}: {exc}") from exc
+
+    return _result(f"{_relp(target, cfg)}/: created", cfg)
+
+
 def edit(
     path: Annotated[str, Field(description="File path relative to the server root")],
     old_string: Annotated[str, Field(description="Text to replace")],
@@ -417,14 +437,14 @@ def register_tools(cfg: ServerConfig | None = None) -> None:
 
     enabled: list = [read, grep, find, ls]
     if not cfg.read_only:
-        enabled.extend([write, edit])
+        enabled.extend([write, mkdir, edit])
     if cfg.allow_bash:
         enabled.append(bash)
 
     read_only_tools = {"read", "grep", "find", "ls"}
 
     # Clear every tool first so re-registration is silent and disabled tools go away.
-    for name in ("read", "grep", "find", "ls", "write", "edit", "bash"):
+    for name in ("read", "grep", "find", "ls", "write", "mkdir", "edit", "bash"):
         try:
             mcp.local_provider.remove_tool(name)
         except Exception:
