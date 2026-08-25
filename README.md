@@ -8,6 +8,7 @@ A **streamable-HTTP/stdio MCP server** exposing the core filesystem, shell, sear
 |------|------|---------|
 | `read` | readOnly | Read a text file with cat-style line numbers |
 | `write` | destructive | Create or overwrite a file atomically |
+| `mkdir` | destructive | Create a directory and any missing parents |
 | `edit` | destructive | Targeted string replacement in a text file |
 | `bash` | destructive | Execute a shell command and capture output/exit code |
 | `grep` | readOnly | Search file contents by regex (uses `rg --no-ignore` if available, with a Python fallback) |
@@ -78,7 +79,7 @@ uv run fastmcp run src/basic_fns_mcp/server.py
 | `--max-read-bytes` | `BASIC_FNS_MAX_READ_BYTES` | `2_000_000` | Refuse `read` for files larger than this |
 | `--max-output-chars` | `BASIC_FNS_MAX_OUTPUT` | `100_000` | Cap any tool result to this length |
 | `--bash-timeout` | `BASIC_FNS_BASH_TIMEOUT` | `120` | Default shell timeout in seconds |
-| `--read-only` | `BASIC_FNS_READ_ONLY` | `false` | Disable `write` and `edit` |
+| `--read-only` | `BASIC_FNS_READ_ONLY` | `false` | Disable `write`, `mkdir`, and `edit` |
 | `--no-bash` | `BASIC_FNS_ALLOW_BASH` | `true` | Do not register the `bash` tool |
 | `--transport` / `--stdio` | `BASIC_FNS_TRANSPORT` | `http` | `http` or `stdio` |
 
@@ -86,7 +87,7 @@ Command-line arguments win over environment variables.
 
 ## Security
 
-* **Path sandbox**: `read`, `write`, `edit`, `grep`, `find`, and `ls` resolve every path inside `--root`. Symlinks are followed and checked; any path that resolves outside the root is rejected.
+* **Path sandbox**: `read`, `write`, `mkdir`, `edit`, `grep`, `find`, and `ls` resolve every path inside `--root`. Symlinks are followed and checked; any path that resolves outside the root is rejected.
 * **`bash` is not sandboxed**: `bash` runs with the full privileges of the server process. A shell command can `cd` anywhere, read any file the server user can read, and execute arbitrary code. Only bind to loopback (`127.0.0.1`) and expose this server to trusted clients.
 * **No command blocklist**: Blocklists are easily bypassed and create a false sense of security, so none is implemented.
 * **Read-only mode**: Use `--read-only` to prevent file modification via this server.

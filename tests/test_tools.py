@@ -5,7 +5,18 @@ import pytest
 
 from basic_fns_mcp.config import ServerConfig, set_config
 from basic_fns_mcp.safety import truncate
-from basic_fns_mcp.server import bash, edit, find, grep, ls, read, write
+from basic_fns_mcp.server import (
+    bash,
+    edit,
+    find,
+    grep,
+    ls,
+    mcp,
+    mkdir,
+    read,
+    register_tools,
+    write,
+)
 from fastmcp.exceptions import ToolError
 
 
@@ -61,6 +72,47 @@ def test_write_creates_parents_and_overwrites_atomically(cfg):
     # Atomic temp leftovers should be gone.
     leftovers = [p for p in cfg.root.rglob("*.tmp")]
     assert not leftovers
+
+
+# ---------------------------------------------------------------------------
+# mkdir
+
+def test_mkdir_creates_directory_and_parents(cfg):
+    result = mkdir("parent/child")
+    assert result == "parent/child/: created"
+    assert (cfg.root / "parent" / "child").is_dir()
+
+
+def test_mkdir_rejects_existing_path(cfg):
+    (cfg.root / "existing").mkdir()
+    with pytest.raises(ToolError, match="Directory already exists"):
+        mkdir("existing")
+
+    (cfg.root / "file").write_text("content")
+    with pytest.raises(ToolError, match="not a directory"):
+        mkdir("file")
+
+
+def test_mkdir_rejects_path_outside_root(cfg):
+    with pytest.raises(ToolError, match="outside the server root"):
+        mkdir("../outside")
+
+
+def test_mkdir_registration_respects_read_only(cfg, monkeypatch):
+    registered = []
+    monkeypatch.setattr(
+        mcp,
+        "tool",
+        lambda fn, annotations: registered.append((fn.__name__, annotations)),
+    )
+    monkeypatch.setattr(mcp.local_provider, "remove_tool", lambda name: None)
+
+    register_tools(cfg)
+    assert ("mkdir", {"destructiveHint": True}) in registered
+
+    registered.clear()
+    register_tools(ServerConfig(root=cfg.root, read_only=True, allow_bash=False))
+    assert all(name != "mkdir" for name, _ in registered)
 
 
 # ---------------------------------------------------------------------------
