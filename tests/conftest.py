@@ -16,3 +16,19 @@ def cfg(tmp_path):
     )
     set_config(c)
     return c
+
+
+@pytest.fixture
+def dangerous_cfg(tmp_path):
+    """Same as ``cfg`` but with root confinement disabled."""
+    c = ServerConfig(
+        root=tmp_path.resolve(),
+        allow_bash=True,
+        read_only=False,
+        bash_timeout=120,
+        max_read_bytes=2_000_000,
+        max_output_chars=100_000,
+        dangerous=True,
+    )
+    set_config(c)
+    return c

@@ -42,3 +42,38 @@ def test_truncate_appends_omission_note():
 def test_truncate_keeps_short_text():
     text = "hello"
     assert truncate(text, 100) == "hello"
+
+
+# --- dangerous mode -------------------------------------------------------
+# The point of these: confinement is off, but relative paths must still anchor
+# to root so ordinary in-root usage is byte-identical to the safe mode.
+
+
+def test_dangerous_allows_parent_escape(dangerous_cfg, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside")
+    secret = outside / "secret.txt"
+    secret.write_text("secret")
+    assert resolve(str(secret), dangerous_cfg) == secret.resolve()
+
+
+def test_dangerous_allows_absolute_outside(dangerous_cfg):
+    assert resolve("/etc/passwd", dangerous_cfg) == Path("/etc/passwd")
+
+
+def test_dangerous_allows_symlink_outside_root(dangerous_cfg, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside")
+    secret = outside / "secret.txt"
+    secret.write_text("secret")
+    link = dangerous_cfg.root / "outside_link"
+    link.symlink_to(secret)
+    assert resolve("outside_link", dangerous_cfg) == secret.resolve()
+
+
+def test_dangerous_still_anchors_relative_paths_to_root(dangerous_cfg):
+    assert resolve("a/b/c.txt", dangerous_cfg) == dangerous_cfg.root / "a" / "b" / "c.txt"
+
+
+def test_dangerous_defaults_off():
+    from basic_fns_mcp.config import ServerConfig
+
+    assert ServerConfig(root=Path.cwd()).dangerous is False

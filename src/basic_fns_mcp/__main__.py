@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
+import sys
 from pathlib import Path
 
 from .config import ServerConfig, set_config
@@ -40,6 +42,7 @@ def main() -> None:
         "bash_timeout": _env_int("BASIC_FNS_BASH_TIMEOUT", 120),
         "allow_bash": _env_bool("BASIC_FNS_ALLOW_BASH", True),
         "read_only": _env_bool("BASIC_FNS_READ_ONLY", False),
+        "dangerous": _env_bool("BASIC_FNS_DANGEROUS", False),
     }
 
     parser = argparse.ArgumentParser(
@@ -58,6 +61,18 @@ def main() -> None:
     parser.add_argument("--bash-timeout", type=int, default=defaults["bash_timeout"], help="Default shell timeout")
     parser.add_argument("--read-only", action="store_true", help="Disable write and edit tools")
     parser.add_argument("--no-bash", action="store_true", help="Disable the bash tool")
+    parser.add_argument(
+        "--dangerous",
+        "--dangerously-allow-full-access",
+        dest="dangerous",
+        action="store_true",
+        default=defaults["dangerous"],
+        help=(
+            "Drop root confinement: the path tools reach anything the invoking "
+            "user can, matching what bash already could. Single-user trusted "
+            "machines only."
+        ),
+    )
     parser.add_argument(
         "--transport",
         choices=("http", "stdio"),
@@ -85,10 +100,21 @@ def main() -> None:
         bash_timeout=args.bash_timeout,
         allow_bash=defaults["allow_bash"] and not args.no_bash,
         read_only=defaults["read_only"] or args.read_only,
+        dangerous=args.dangerous,
     )
 
     set_config(cfg)
     register_tools(cfg)
+
+    if cfg.dangerous:
+        # stderr, never stdout: on stdio transport stdout is the MCP channel.
+        print(
+            "WARNING: basic-fns-mcp running with --dangerous. Root confinement "
+            f"is OFF; file tools can reach anything user {getpass.getuser()!r} "
+            "can read or write. Root is now only a base for relative paths.",
+            file=sys.stderr,
+            flush=True,
+        )
 
     if transport == "http":
         mcp.run(transport="http", host=cfg.host, port=cfg.port)

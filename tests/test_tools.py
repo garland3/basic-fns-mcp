@@ -44,7 +44,12 @@ def test_read_rejects_binary(cfg):
         read("binary.bin")
 
 
-def test_read_rejects_oversize_file(cfg):
+def test_read_caps_selected_bytes_not_file_size(cfg):
+    """The byte cap applies to what was selected, and stops rather than refuses.
+
+    The old behaviour rejected the whole file on its size before looking at
+    offset/limit, so a bounded request against a large log failed outright.
+    """
     tiny = ServerConfig(
         root=cfg.root,
         max_read_bytes=5,
@@ -52,9 +57,44 @@ def test_read_rejects_oversize_file(cfg):
     )
     set_config(tiny)
     f = cfg.root / "big.txt"
-    f.write_text("much too large")
-    with pytest.raises(ToolError, match="exceeding"):
-        read("big.txt")
+    f.write_text("much too large\nsecond line\n")
+    out = read("big.txt")
+    assert "stopped at line" in out
+    assert "offset/limit" in out
+
+
+def test_read_honours_limit_on_a_file_over_the_byte_cap(cfg):
+    """A bounded head-read of a big file must succeed (the conv-88 failure)."""
+    tiny = ServerConfig(
+        root=cfg.root,
+        max_read_bytes=200,
+        read_only=True,
+    )
+    set_config(tiny)
+    f = cfg.root / "huge.log"
+    f.write_text("\n".join(f"line {i}" for i in range(5000)))
+    assert f.stat().st_size > tiny.max_read_bytes
+
+    out = read("huge.log", offset=0, limit=3)
+    assert "stopped at line" not in out
+    assert out.splitlines() == ["1\tline 0", "2\tline 1", "3\tline 2"]
+
+
+def test_read_offset_seeks_without_reading_everything(cfg):
+    f = cfg.root / "seek.txt"
+    f.write_text("\n".join(f"row {i}" for i in range(100)))
+    out = read("seek.txt", offset=50, limit=2)
+    assert out.splitlines() == ["51\trow 50", "52\trow 51"]
+
+
+def test_read_missing_file_reports_the_resolved_path(cfg):
+    """A bare relative name resolves against the root; say which path was tried."""
+    with pytest.raises(ToolError) as exc_info:
+        read("AGENTS.md")
+    message = str(exc_info.value)
+    assert "AGENTS.md" in message
+    assert str(cfg.root) in message
+    assert "no such file" in message
 
 
 # ---------------------------------------------------------------------------

@@ -18,22 +18,29 @@ from .config import ServerConfig, get_config
 from .safety import DEFAULT_SKIP_DIRS, resolve, truncate
 
 
-mcp = FastMCP(
-    "basic-fns-mcp",
-    instructions=(
-        "All filesystem paths are relative to the server root. "
-        "Use read/edit/write for file changes; ls/find/grep for discovery. "
-        "edit requires an old_string that uniquely identifies the target "
-        "unless replace_all is true."
-    ),
+_DEFAULT_INSTRUCTIONS = (
+    "All filesystem paths are relative to the server root. "
+    "Use read/edit/write for file changes; ls/find/grep for discovery. "
+    "edit requires an old_string that uniquely identifies the target "
+    "unless replace_all is true."
 )
+
+mcp = FastMCP("basic-fns-mcp", instructions=_DEFAULT_INSTRUCTIONS)
 
 _RG_AVAILABLE = shutil.which("rg") is not None
 
 
 def _relp(target: Path, cfg: ServerConfig) -> str:
-    """Return a POSIX-style path string relative to the server root."""
-    return target.relative_to(cfg.root).as_posix()
+    """Return a POSIX-style path string relative to the server root.
+
+    In dangerous mode a target can legitimately sit outside the root, where a
+    relative path would be meaningless (and ``relative_to`` would raise), so
+    fall back to the absolute path.
+    """
+    try:
+        return target.relative_to(cfg.root).as_posix()
+    except ValueError:
+        return target.as_posix()
 
 
 def _result(text: str, cfg: ServerConfig | None = None) -> str:
@@ -72,43 +79,77 @@ def _cap_lines(lines: list[str], max_results: int, cap_message: str) -> str:
 
 
 def read(
-    path: Annotated[str, Field(description="File path relative to the server root")],
+    path: Annotated[str, Field(description="Absolute path, or a path relative to the server root")],
     offset: Annotated[int, Field(description="0-indexed starting line number")] = 0,
     limit: Annotated[int, Field(description="Maximum number of lines to return")] = 2000,
 ) -> str:
-    """Read a text file and return its contents with cat-style line numbers."""
+    """Read a text file and return the requested lines with cat-style line numbers.
+
+    ``offset``/``limit`` are honoured on files of any size — the file is
+    streamed and only the requested window is held in memory, so reading the
+    head of a multi-gigabyte log works. The byte cap applies to what is
+    actually selected, not to the file on disk.
+
+    Relative paths resolve against the server root, which is often not the
+    directory you have in mind; prefer absolute paths. Errors report the
+    absolute path that was actually tried.
+    """
     cfg = get_config()
     target = resolve(path, cfg)
 
     if not target.is_file():
-        raise ToolError(f"Not a file: {path!r}")
-
-    size = target.stat().st_size
-    if size > cfg.max_read_bytes:
-        raise ToolError(
-            f"File {path!r} is {size} bytes, exceeding the {cfg.max_read_bytes} byte limit."
-        )
+        detail = "it is a directory" if target.is_dir() else "no such file"
+        raise ToolError(f"Not a file: {path!r} -> {target} ({detail})")
 
     # First chunk is checked for binary content.
     with open(target, "rb") as fh:
         if b"\x00" in fh.read(8192):
-            raise ToolError("binary file")
-
-    with open(target, "r", encoding="utf-8", errors="replace") as fh:
-        lines = fh.read().splitlines()
+            raise ToolError(f"binary file: {target}")
 
     if offset < 0:
         offset = 0
     if limit < 0:
         limit = 0
 
-    selected = lines[offset : offset + limit]
+    # Stream: the previous implementation rejected the file on its total size
+    # before it ever looked at offset/limit, so `read(big.log, limit=80)` --
+    # a bounded, entirely reasonable request -- failed outright. Cap the bytes
+    # collected instead, which is the thing that actually has to stay small.
+    # A single line is capped too. Raw tmux pane logs are written with
+    # carriage returns and no newlines at all, so the whole file is one
+    # "line"; without a per-line cap a bounded request against one returns
+    # nothing but the cap message, which is no more useful than the old error.
+    line_cap = max(1, cfg.max_read_bytes // max(1, min(limit, 100)))
+
+    selected: list[str] = []
+    collected = 0
+    truncated_at: int | None = None
+    with open(target, "r", encoding="utf-8", errors="replace") as fh:
+        for lineno, line in enumerate(fh):
+            if lineno < offset:
+                continue
+            if len(selected) >= limit:
+                break
+            line = line.rstrip("\n").rstrip("\r")
+            if len(line) > line_cap:
+                line = line[:line_cap] + f"… [line {lineno + 1} truncated at {line_cap} chars]"
+            collected += len(line) + 1
+            if collected > cfg.max_read_bytes:
+                truncated_at = offset + len(selected)
+                break
+            selected.append(line)
+
     last_lineno = offset + len(selected)
     width = max(1, len(str(last_lineno)))
 
     numbered = "\n".join(
         f"{(offset + i + 1):>{width}}\t{line}" for i, line in enumerate(selected)
     )
+    if truncated_at is not None:
+        numbered += (
+            f"\n... [stopped at line {truncated_at}: the selected lines exceed the "
+            f"{cfg.max_read_bytes} byte limit. Narrow the range with offset/limit.]"
+        )
     return _result(numbered, cfg)
 
 
@@ -434,6 +475,19 @@ def register_tools(cfg: ServerConfig | None = None) -> None:
     """
     if cfg is None:
         cfg = get_config()
+
+    # Tell the client which path convention is actually in force, otherwise a
+    # model reads "relative to the server root" and never tries an absolute path.
+    if cfg.dangerous:
+        mcp.instructions = (
+            "Filesystem paths may be absolute or relative to the server root "
+            f"({cfg.root}); there is no root confinement in this session. "
+            "Use read/edit/write for file changes; ls/find/grep for discovery. "
+            "edit requires an old_string that uniquely identifies the target "
+            "unless replace_all is true."
+        )
+    else:
+        mcp.instructions = _DEFAULT_INSTRUCTIONS
 
     enabled: list = [read, grep, find, ls]
     if not cfg.read_only:
